@@ -63,10 +63,10 @@ class captionVRDDataset(Dataset):
             torch.ones_like(replaced_tokens) * replacement_token_id,
             replaced_tokens
         )
-        if len(tokenized) > 77:
-            print('++++++++++++++++++++++++++++++++++')
-        if len(masked_tokenized) > 77:
-            print('///////-----------/////////////')
+        if len(tokenized['input_ids'][0]) > 77:
+            print('moreeeee thannnnn 77')
+        if len(masked_tokenized['input_ids'][0]) > 77:
+            print('moreeeee thannnnn 77')
         '''
         return {
             "tokens": tokenized['input_ids'][0],
@@ -82,3 +82,13 @@ def build_loader(args, tokenizer, original_dataset):
     loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, num_workers=args.num_workers, shuffle=True, drop_last=True)
     return loader
 
+def create_relation_to_tokens_test(VRDDataset_test , tokenizer):
+    
+    relation_to_tokens_test  = {}
+    for imgTest, targetTest in VRDDataset_test:
+        relations = targetTest.get('relations_text', [])
+        for s, r, o in relations:
+            if r not in relation_to_tokens_test :
+                tokenized_relation = tokenizer(r, return_tensors='pt', padding='max_length', truncation=True, max_length=77)
+                relation_to_tokens_test[r]=tokenized_relation['input_ids'][0]
+    return  relation_to_tokens_test     

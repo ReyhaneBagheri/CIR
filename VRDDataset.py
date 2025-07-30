@@ -176,13 +176,21 @@ def _bbox_xywh_to_xyxy(bbox: Dict[str, float]) -> Tuple[float, float, float, flo
 # ---------------------------------------------------------------------------
 class VRDVocabulary:
     def __init__(self, object_bg: str = '__background__', predicate_bg: str = '[UNK]'):
+        self.object_bg = object_bg # Added this line
+        self.predicate_bg = predicate_bg # Added this line
+        self.obj2id: Dict[str, int] = {self.object_bg: 0} # Changed to self.object_bg
+        self.id2obj: List[str] = [self.object_bg]         # Changed to self.object_bg
+        self.pred2id: Dict[str, int] = {self.predicate_bg: 0} # Changed to self.predicate_bg
+        self.id2pred: List[str] = [self.predicate_bg] # Changed to self.predicate_bg
+    '''
+    def __init__(self, object_bg: str = '__background__', predicate_bg: str = '[UNK]'):
         self.object_bg = object_bg
         self.predicate_bg = predicate_bg
         self.obj2id: Dict[str, int] = {object_bg: 0} # maps object name to ID
         self.id2obj: List[str] = [object_bg]         # reverse: maps ID to name
         self.pred2id: Dict[str, int] = {predicate_bg: 0}
         self.id2pred: List[str] = [predicate_bg]
-
+    '''
     def add_object(self, name: str) -> int:
         if name not in self.obj2id:
             self.obj2id[name] = len(self.id2obj)
@@ -362,8 +370,9 @@ class VRDDataset(Dataset):
         img = Image.open(img_path).convert('RGB')
 
         boxes = torch.tensor(sample['boxes'], dtype=torch.float32)  # [N,4] x1,y1,x2,y2
-        names = sample['object_names']
-        labels = torch.tensor([self.vocab.obj2id[n] for n in names], dtype=torch.int64)
+        names = sample['object_names']     
+        #labels = torch.tensor([self.vocab.obj2id[n] for n in names], dtype=torch.int64)
+        labels = torch.tensor([self.vocab.obj2id.get(n, self.vocab.obj2id[self.vocab.object_bg]) for n in names], dtype=torch.int64)
         edges = torch.tensor(sample['edges'], dtype=torch.int64) if len(sample['edges']) else torch.zeros((0,3), dtype=torch.int64)
 
         # Cap objects if necessary (subsample + remap edges)
