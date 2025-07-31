@@ -240,6 +240,7 @@ class VRDDataset(Dataset):
         config: Optional[VRDConfig] = None,
         vocab: Optional[VRDVocabulary] = None,
         tokenizer: Optional[Any] = None,
+        # TODO: Add masking ratio 
     ):
         """
         Parameters
@@ -454,25 +455,7 @@ class VRDDataset(Dataset):
             new_idx = (idx + 1) % len(self)
             return self.__getitem__(new_idx)
 
-        ###############################
-        '''
-        relations = target.get('relations_text', [])
-        if  relations:
-            
-
-            triplet_strings = [f"{s} {r} {o}" for s, r, o in relations]
-            full_caption = '. '.join(triplet_strings)
-
-            j = random.randint(0, len(relations) - 1)
-            masked_triplets = triplet_strings.copy()
-            s, r, o = relations[j]
-            masked_triplets[j] = f"{s} [$] {o}"
-            masked_caption = '. '.join(masked_triplets)
-            target['caption'] = full_caption
-            target['replaced_caption'] = masked_caption
-
-        ###############################
-        '''
+        #
         relations = target.get('relations_text', [])
         if not relations:
             return "", "", 0
@@ -492,6 +475,7 @@ class VRDDataset(Dataset):
             final_triplets = []
             for triplet in triplet_strings:
                 tentative = current_caption + (". " if current_caption else "") + triplet
+                # TODO: Check if it works when we have two-part words. Check if we have "."
                 tokens = self.tokenizer(tentative, return_tensors='pt', padding=False, truncation=False)['input_ids'][0]
                 if len(tokens) <= 77:
                     current_caption = tentative
@@ -616,4 +600,6 @@ if __name__ == '__main__':
     #print(len(target.get('relations_text')))
     #print(target.get('rel_caption'))
     #print(target.get('caption')[:50])
+    
+    # TODO: Visualize dataset with captions and relations
 '''

@@ -65,7 +65,9 @@ def extract_pseudo_tokens_with_phi(text_encoder, tokenizer, phi_for_eval,VRDData
     # Precompute relation embeddings (so we don't recompute for every image)
     relation_embeddings = {}
     for rel, token_ids in relation_to_tokens_test.items():
+
         tokens = torch.tensor(token_ids).unsqueeze(0).to(accelerator.device)  # shape [1, seq_len]
+        # TODO: Compare with the tokenized text, not embedded text!
         with torch.no_grad():
             out = text_encoder(input_ids=tokens)
             emb = out.text_embeds.squeeze(0)  # shape [dim]
@@ -111,6 +113,7 @@ def extract_pseudo_tokens_with_phi(text_encoder, tokenizer, phi_for_eval,VRDData
             # Compute cosine similarity with all relation embeddings
             best_rel = None
             best_score = -1
+            # TODO: Use vectorized operations
             for rel_text, rel_emb in relation_embeddings.items():
                 cos_sim = F.cosine_similarity(
                     estimated_token_embeddings.unsqueeze(0),

@@ -90,5 +90,6 @@ def create_relation_to_tokens_test(VRDDataset_test , tokenizer):
         for s, r, o in relations:
             if r not in relation_to_tokens_test :
                 tokenized_relation = tokenizer(r, return_tensors='pt', padding='max_length', truncation=True, max_length=77)
+                # TODO: What is 0?
                 relation_to_tokens_test[r]=tokenized_relation['input_ids'][0]
     return  relation_to_tokens_test     

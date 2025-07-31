@@ -221,7 +221,6 @@ def train_phi(args):
 
     train_loss = 0.0
     global_step = 0
-    best_recall = -1
     '''
     is_local_main_process ? 
     Only show the tqdm progress bar if this process is the main one locally.
