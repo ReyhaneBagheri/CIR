@@ -111,6 +111,7 @@ from __future__ import annotations
 import os
 import json
 import copy
+import math
 from pickle import FALSE
 import random
 from dataclasses import dataclass, field
@@ -240,6 +241,7 @@ class VRDDataset(Dataset):
         config: Optional[VRDConfig] = None,
         vocab: Optional[VRDVocabulary] = None,
         tokenizer: Optional[Any] = None,
+        ratio: int = 1,
         # TODO: Add masking ratio 
     ):
         """
@@ -260,7 +262,7 @@ class VRDDataset(Dataset):
         #The sequence of random numbers is the same every time the code runs
         random.seed(self.config.seed)
         self.transforms = transforms
-
+        self.ratio = ratio
         if image_subdir is None:
             # default naming convention like: sg_train_images, sg_test_images
             image_subdir = f'sg_{split}_images'
@@ -486,11 +488,27 @@ class VRDDataset(Dataset):
         
         full_caption = '. '.join(final_triplets)
 
-       
+        
+        # Assume ratio is a number like 50 (meaning 50%)
+        n = math.ceil((self.ratio / 100) * len(final_triplets))  # number of triplets to select
+
+        # Choose n unique random indices from the list
+        selected_indices = random.sample(range(len(final_triplets)), n)
+
+        masked_triplets = final_triplets.copy()
+
+        for j in selected_indices:
+            s, r, o = relations[j]
+            masked_relation = ' '.join(['[$]'] * len(r.split()))
+            masked_triplets[j] = f"{s} {masked_relation} {o}"
+            #s, r, o = final_triplets[j].split(' ', 2)
+            #masked_triplets[j] = f"{s} [$] {o}"
+        '''
         j = random.randint(0, len(final_triplets) - 1)
         s, r, o = final_triplets[j].split(' ', 2)
         masked_triplets = final_triplets.copy()
         masked_triplets[j] = f"{s} [$] {o}"
+        '''
         masked_caption = '. '.join(masked_triplets)
         target['caption'] = full_caption
         target['replaced_caption'] = masked_caption
@@ -509,6 +527,7 @@ def build_vrd(
     vocab: Optional[Dict[str, Any]] = None,
     annotation_filename: Optional[str] = None,
     tokenizer : Optional[Any] = None,
+    ratio: int=1,
 ):
     """Factory building the VRDDataset.
 
@@ -538,6 +557,7 @@ def build_vrd(
         config=config,
         vocab=vocab_obj,
         tokenizer = tokenizer,
+        ratio = ratio,
     )
     return ds
 
@@ -545,7 +565,7 @@ def build_vrd(
 # Example main (debug)
 # ---------------------------------------------------------------------------
 
-def createDataset (root: str ,split: str,vocab: str, save_vocab: str , tokenizer):
+def createDataset (root: str ,split: str,vocab: str, save_vocab: str , tokenizer, ratio):
 
     config = VRDConfig(build_text_prompts=False, flip_augmentation=False, training=(split=='train'))
     vocab_dict = None
@@ -553,7 +573,7 @@ def createDataset (root: str ,split: str,vocab: str, save_vocab: str , tokenizer
         with open(vocab, 'r') as f:
             vocab_dict = json.load(f)
 
-    dataset = build_vrd(root, split, config=config, vocab=vocab_dict , tokenizer=tokenizer)
+    dataset = build_vrd(root, split, config=config, vocab=vocab_dict , tokenizer=tokenizer, ratio= ratio)
     print(f"Loaded {len(dataset)} {split} samples. Object classes: {dataset.vocab.object_count()} | Predicates: {dataset.vocab.predicate_count()}")
 
     if save_vocab and split=='train':
@@ -562,9 +582,74 @@ def createDataset (root: str ,split: str,vocab: str, save_vocab: str , tokenizer
     return dataset
 
 
-'''
+
 
 if __name__ == '__main__':
+    
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as patches
+    from torchvision import transforms
+    import torchvision.transforms.functional as F
+    from transformers import CLIPTextModelWithProjection, CLIPVisionModelWithProjection, CLIPImageProcessor, CLIPTokenizer
+    tokenizer = CLIPTokenizer.from_pretrained('stabilityai/stable-diffusion-xl-base-1.0', subfolder='tokenizer_2', cache_dir="./hf_models")
+    tokenizer.add_special_tokens({'additional_special_tokens':["[$]"]}) # NOTE: 49408
+    '''
+    tokens = tokenizer("on", return_tensors='pt', padding=False, truncation=False)['input_ids'][0]
+    tokens2 = tokenizer("next to", return_tensors='pt', padding=False, truncation=False)['input_ids'][0]
+    tokens3 = tokenizer("table. next to", return_tensors='pt', padding=False, truncation=False)['input_ids'][0]
+    tokens4 = tokenizer(".", return_tensors='pt', padding=False, truncation=False)['input_ids'][0]
+    
+    print(tokens)
+    print(tokens2)
+    print(tokens3)
+    print(tokens4)
+    '''
+    
+    VRDDataset_train = createDataset(root='/data/reyDataset/vrd_kaggle/vrd' ,split='train',vocab='', save_vocab='/root/reyhane/CIR/vocab.json', tokenizer=tokenizer, ratio=50 )
+    img, target = VRDDataset_train[0]
+    
+    print(target['image_id'], target['boxes'].shape, target['edges'].shape)
+    print(target['caption'])
+    print(target['replaced_caption'])
+    # اگر img یک tensor است، به PIL تبدیل کن
+    if isinstance(img, torch.Tensor):
+        img = F.to_pil_image(img)
+
+    # ساخت پوشه خروجی (در صورت نیاز)
+    output_dir = "output_images"
+    os.makedirs(output_dir, exist_ok=True)
+
+    # شکل تصویر و محورها
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.imshow(img)
+
+    # رسم جعبه‌های مرزی
+    boxes = target['boxes']  # فرض بر این است که سایز آن [N, 4] و به صورت [x1, y1, x2, y2] است
+    for box in boxes:
+        x1, y1, x2, y2 = box.tolist()
+        rect = patches.Rectangle((x1, y1), x2 - x1, y2 - y1,
+                                linewidth=2, edgecolor='red', facecolor='none')
+        ax.add_patch(rect)
+
+    # حذف محورها
+    ax.axis('off')
+
+    # افزودن کپشن‌ها به عنوان عنوان تصویر
+    caption = target['caption']
+    replaced_caption = target['replaced_caption']
+    plt.title(f"Caption: {caption}\nReplaced: {replaced_caption}", fontsize=10)
+
+    # ذخیره تصویر
+    image_id = target['image_id'] if 'image_id' in target else 'unknown'
+    save_path = os.path.join(output_dir, f"{image_id}.png")
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()  # برای جلوگیری از باز شدن تصویر
+
+    print(f"Saved to {save_path}")
+    
+    ###############################################
+    '''
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--root', type=str, required=True, help='Path to VRD root directory')
@@ -586,20 +671,8 @@ if __name__ == '__main__':
     if args.save_vocab and args.split=='train':
         dataset.save_vocab(args.save_vocab)
         print(f"Saved vocab to {args.save_vocab}")
-
-    # quick sanity sample
-    img, target = dataset[0]
-    print(target['image_id'], target['boxes'].shape, target['edges'].shape)
-    print(target['caption'])
-    print(target['replaced_caption'])
-    #print(target['edges'])
-    #print(target['boxes'])
     
-    #print(target.get('relations_text')[:5])
-    #print(target)
-    #print(len(target.get('relations_text')))
-    #print(target.get('rel_caption'))
-    #print(target.get('caption')[:50])
+    '''
     
     # TODO: Visualize dataset with captions and relations
-'''
+

@@ -166,9 +166,9 @@ def train_phi(args):
     load datasets of only captions and create 
     '''
     print('pytorch loader')
-    VRDDataset_train = createDataset(root='/data/reyDataset/vrd_kaggle/vrd' ,split='train',vocab='', save_vocab='/root/reyhane/CIR/vocab.json', tokenizer=tokenizer )
+    VRDDataset_train = createDataset(root='/data/reyDataset/vrd_kaggle/vrd' ,split='train',vocab='', save_vocab='/root/reyhane/CIR/vocab.json', tokenizer=tokenizer, ratio=1 )
     train_dataset = build_loader(args, tokenizer ,VRDDataset_train )
-    VRDDataset_test  = createDataset(root='/data/reyDataset/vrd_kaggle/vrd' ,split='test',vocab='/root/reyhane/CIR/vocab.json', save_vocab='', tokenizer=tokenizer )
+    VRDDataset_test  = createDataset(root='/data/reyDataset/vrd_kaggle/vrd' ,split='test',vocab='/root/reyhane/CIR/vocab.json', save_vocab='', tokenizer=tokenizer, ratio=1 )
     relation_to_tokens_test  = create_relation_to_tokens_test(VRDDataset_test , tokenizer)
     print('relation_to_tokens_test loaded successfully!!!!!!')
         
