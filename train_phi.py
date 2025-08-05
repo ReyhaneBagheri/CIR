@@ -171,7 +171,7 @@ def train_phi(args):
     VRDDataset_test  = createDataset(root='/data/reyDataset/vrd_kaggle/vrd' ,split='test',vocab='/root/reyhane/CIR/vocab.json', save_vocab='', tokenizer=tokenizer, ratio=1 )
     relation_to_tokens_test  = create_relation_to_tokens_test(VRDDataset_test , tokenizer)
     print('relation_to_tokens_test loaded successfully!!!!!!')
-        
+   
     # Define the optimizer, the loss and the grad scaler
     '''
     optimizer --> Updates weights using gradients -->	Learning happens
@@ -207,7 +207,26 @@ def train_phi(args):
 
     if accelerator.is_main_process:
         accelerator.init_trackers("zeroshot-cir", config=vars(args))
-
+    ###############################
+    # output of the text embedding
+    '''
+    relation_embeddings = {}
+    for rel, token_ids in relation_to_tokens_test.items():
+        tokens = torch.tensor(token_ids).unsqueeze(0).to(accelerator.device)  # shape [1, seq_len]
+        # TODO: Compare with the tokenized text, not embedded text!
+        with torch.no_grad():
+            out = text_encoder(input_ids=tokens)
+            emb = out.text_embeds.squeeze(0)  # shape [dim]
+            if args.l2_normalize:
+                emb = F.normalize(emb, dim=-1)
+        relation_embeddings[rel] = emb
+        print(emb)
+        print(emb.size())
+        exit(1)
+    
+    '''
+    
+    ################################
     # Start with the training loop
     total_batch_size = args.batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
@@ -331,7 +350,7 @@ def train_phi(args):
                         save_phi(f"ema_phi_latest", global_step, phi_for_saving, args.output_dir)
                
                 #######################################3
-                if args.validation_steps and (global_step % args.validation_steps == 0 or global_step == 50):
+                if args.validation_steps and (global_step % args.validation_steps == 0 or global_step == 50 ):
                     if accelerator.is_main_process:
                         logger.info(f"evaluate model... step: {global_step}")
 
@@ -344,30 +363,11 @@ def train_phi(args):
                         phi_for_eval.eval()
 
                         # Extract the pseudo tokens for the VRD test set using Phi
-                        accuracy = extract_pseudo_tokens_with_phi(text_encoder , tokenizer, phi_for_eval,VRDDataset_test , relation_to_tokens_test
+                        accuracy = extract_pseudo_tokens_with_phi(text_encoder,text_encoder , tokenizer, phi_for_eval,VRDDataset_test , relation_to_tokens_test
                                                        ,save_path='/root/reyhane/CIR/results/accuracy_scores.json' ,args= args, accelerator=accelerator)
                         print(accuracy)
                         phi.train()
-                        #cirr_val_pseudo_tokens = cirr_val_pseudo_tokens.to(accelerator.device)
-                        '''
-                        # Compute the CIRR validation metrics
-                        cirr_results_dict = cirr_compute_val_metrics(cirr_relative_val_dataset, text_encoder,
-                                                                     cirr_val_index_features, cirr_val_index_names,
-                                                                     cirr_val_ref_names_list, cirr_val_pseudo_tokens)
-                        check_list = ['cirr_recall_at1', 'cirr_recall_at5', 'cirr_recall_at10', 'cirr_recall_at50']
-                        for check_key in check_list:
-                            accelerator.log({f"validate/{check_key}": cirr_results_dict[check_key]}, step=global_step)
-                        print(json.dumps(cirr_results_dict, indent=4))
 
-                        # Save the best model.
-                        if args.checkpointing_steps:
-                            if cirr_results_dict['cirr_recall_at1'] > best_recall:
-                                best_recall = cirr_results_dict['cirr_recall_at1']
-                                logger.info(f"best model saving... step: {global_step}")
-                                save_phi("phi_best", global_step, accelerator.unwrap_model(phi), args.output_dir)
-
-                        phi.train()
-                        '''
             if global_step >= args.max_train_steps:
                 exit()
 

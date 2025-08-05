@@ -18,7 +18,7 @@ import webdataset as wds
 import spacy
 import numpy as np
 import datasets
-
+from transformers import CLIPTextModelWithProjection
 
 
 class captionVRDDataset(Dataset):
@@ -91,5 +91,11 @@ def create_relation_to_tokens_test(VRDDataset_test , tokenizer):
             if r not in relation_to_tokens_test :
                 tokenized_relation = tokenizer(r, return_tensors='pt', padding='max_length', truncation=True, max_length=77)
                 # TODO: What is 0?
+                '''
+               tokenized_relation['input_ids'] =  tensor([[49406,   525, 49407]])
+               tokenized_relation['input_ids'][0] = tensor([49406,   525, 49407])
+               declining the dimention
+                '''
+               
                 relation_to_tokens_test[r]=tokenized_relation['input_ids'][0]
     return  relation_to_tokens_test     
