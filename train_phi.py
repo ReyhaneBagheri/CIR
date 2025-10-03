@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 from loader import build_loader , create_relation_to_tokens_test
-from encode_with_pseudo_tokens import encode_with_pseudo_tokens_HF , extract_pseudo_tokens_with_phi
+from encode_with_pseudo_tokens import encode_with_pseudo_tokens_HF , extract_pseudo_tokens_with_phi, extract_pseudo_tokens_with_phi2 , calculate_validation
 from models import build_text_encoder, Phi, EMAModel
 
 
@@ -38,7 +38,10 @@ logger = get_logger(__name__)
 
 def parse_args():
     parser = ArgumentParser()
-
+    ######################
+    parser.add_argument("--mode", default="train", type=str,
+                        help="Whether to train a new model or only evaluate the latest checkpoint")
+    ######################
     parser.add_argument("--output_dir", default="trained_models", type=str,
                         help="The output directory where the model predictions and checkpoints will be written")
     parser.add_argument("--logging_dir", default="logs", type=str, help="tensorboard logs will saved here")
@@ -166,8 +169,9 @@ def train_phi(args):
     load datasets of only captions and create 
     '''
     print('pytorch loader')
-    VRDDataset_train = createDataset(root='/data/reyDataset/vrd_kaggle/vrd' ,split='train',vocab='', save_vocab='/root/reyhane/CIR/vocab.json', tokenizer=tokenizer, ratio=1 )
-    train_dataset = build_loader(args, tokenizer ,VRDDataset_train )
+    if args.mode == "train":
+        VRDDataset_train = createDataset(root='/data/reyDataset/vrd_kaggle/vrd' ,split='train',vocab='', save_vocab='/root/reyhane/CIR/vocab.json', tokenizer=tokenizer, ratio=1 )
+        train_dataset = build_loader(args, tokenizer ,VRDDataset_train )
     VRDDataset_test  = createDataset(root='/data/reyDataset/vrd_kaggle/vrd' ,split='test',vocab='/root/reyhane/CIR/vocab.json', save_vocab='', tokenizer=tokenizer, ratio=1 )
     relation_to_tokens_test  = create_relation_to_tokens_test(VRDDataset_test , tokenizer)
     print('relation_to_tokens_test loaded successfully!!!!!!')
@@ -200,10 +204,14 @@ def train_phi(args):
             num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps * accelerator.num_processes,
             num_training_steps=args.max_train_steps * args.gradient_accumulation_steps * accelerator.num_processes,
     )
-
-    phi, optimizer, lr_scheduler, train_dataset = accelerator.prepare(
-            phi, optimizer, lr_scheduler, train_dataset
-    )
+    if args.mode == "train":
+        phi, optimizer, lr_scheduler, train_dataset = accelerator.prepare(
+                phi, optimizer, lr_scheduler, train_dataset
+        )
+    if args.mode == "eval":
+        phi, optimizer, lr_scheduler = accelerator.prepare(
+                phi, optimizer, lr_scheduler
+        )
 
     if accelerator.is_main_process:
         accelerator.init_trackers("zeroshot-cir", config=vars(args))
@@ -235,144 +243,154 @@ def train_phi(args):
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total steps = {args.max_train_steps}")
-
-    phi.train()
-
-    train_loss = 0.0
-    global_step = 0
-    '''
-    is_local_main_process ? 
-    Only show the tqdm progress bar if this process is the main one locally.
-    To avoid having multiple progress bars from multiple GPUs flooding the screen.
-    '''
-    progress_bar = tqdm(range(global_step, args.max_train_steps), disable=not accelerator.is_local_main_process)
-    progress_bar.set_description("Steps")
-
-    while True:
-        '''
-        original_tokens : consist of tokens from origin prompts
-        replaced_tokens : consist of tokens contain [$] 
-        '''
-        for idx, (original_tokens, replaced_tokens, indicators) in enumerate(train_dataset):
-            original_tokens = original_tokens.to(accelerator.device)
-            replaced_tokens = replaced_tokens.to(accelerator.device)
-            #encode the original_tokens  from prompts
-            # encode grand truth by encoder 
-            org = text_encoder(input_ids=original_tokens)
-            original_text_embeddings, original_last_hidden_states = org.text_embeds, org.last_hidden_state
-            input_features = original_text_embeddings.clone()
-            # add noise 
-            '''
-            ε_i = α_i * N(0, 1)
-            α_i ∈ [0,1] is random per sample (controls noise strength),
-            N(0,1) is standard Gaussian noise over D dimensions.
-            '''
-            input_features += 1.0 * torch.rand(input_features.shape[0], device=input_features.device).unsqueeze(-1) * torch.randn(input_features.shape, device=input_features.device)
-
-            # normalize test
-            if args.l2_normalize:
-                input_features = F.normalize(input_features, dim=-1)
-            #################
-            #Predict pseudo-token embeddings
-            estimated_token_embeddings = phi(input_features)
-            '''
-            1) first of all it embedds the replaced_tokens using text encoder
-            Returns [batch_size, seq_len, hidden_dim] → the normal word embeddings
-            2) For any token in text(replaced_tokens) that has ID 259, replace its embedding with pseudo_tokens[i].
-            3) add positional embedding because the transformers do not know the positions
-                This adds a unique vector for each position in the sentence:
-
-                0th token → add vector P₀
-
-                1st token → add vector P₁
-
-                2nd token → add vector P₂
-            4) Feeds the modified embeddings into CLIP’s transformer
-            5) Normalize final layer
-               x_last: This is the last hidden state before projection.
-            6) pooling : For each token (word), the model has a vector.
-                But we need just ONE vector per sentence to represent the whole thing.
-                pool the sequence of token embeddings into one vector per sentence.
-            7)  projects into CLIP’s shared embedding space
-            8)  outputes:
-                x: the final embedding used for comparison/loss
-                x_last: all hidden states (useful for loss inspection or token-wise analysis)
-            '''
-            replaced_text_embeddings, replaced_last_hidden_states = encode_with_pseudo_tokens_HF(text_encoder, replaced_tokens, estimated_token_embeddings, return_last_states=True)
-
-            loss = F.mse_loss(replaced_text_embeddings.float(), original_text_embeddings.float(), reduction="mean")
-
-            avg_loss = accelerator.gather(loss.repeat(args.batch_size)).mean()
-            train_loss += avg_loss.item() / args.gradient_accumulation_steps
-
-            # Backpropagation and optimization
-            accelerator.backward(loss)
-            if accelerator.sync_gradients and args.max_grad_norm is not None:
-                accelerator.clip_grad_norm_(phi.parameters(), args.max_grad_norm)
-            optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad()
-            
-            if accelerator.sync_gradients:
-                if args.use_ema:
-                    ema_phi.step(phi.module.parameters())
-                progress_bar.update(1)
-                global_step += 1
-                '''
-                Logs training loss
-
-                Logs learning rate
-
-                Logs ratio of examples with real token replaced
-                '''
-                accelerator.log({"train/train_loss": train_loss}, step=global_step)
-                train_loss = 0.0
-                accelerator.log({'train/lr': lr_scheduler.get_last_lr()[0]}, step=global_step)
-                accelerator.log({'train/preproc_rate': torch.sum(indicators).item() / len(indicators)}, step=global_step)
-                '''
-                If step is a multiple of args.checkpointing_steps, it saves:
-
-                phi_latest
-
-                phi_<step>
-
-                EMA (Exponential Moving Average) versions if enabled
-                '''
-                if args.checkpointing_steps and global_step % args.checkpointing_steps == 0:
-                    if accelerator.is_main_process:
-                        logger.info(f"model saving... step: {global_step}")
-                        save_phi(f"phi_{global_step:09}", global_step, accelerator.unwrap_model(phi), args.output_dir)
-                        save_phi(f"phi_latest", global_step, accelerator.unwrap_model(phi), args.output_dir)
-                    if args.use_ema:
-                        phi_for_saving = copy.deepcopy(accelerator.unwrap_model(phi))
-                        ema_phi.copy_to(phi_for_saving.parameters())
-                        save_phi(f"ema_phi_{global_step:09}", global_step, phi_for_saving, args.output_dir)
-                        save_phi(f"ema_phi_latest", global_step, phi_for_saving, args.output_dir)
-               
-                #######################################3
-                if args.validation_steps and (global_step % args.validation_steps == 0 or global_step == 50 ):
-                    if accelerator.is_main_process:
-                        logger.info(f"evaluate model... step: {global_step}")
-
-                        if args.use_ema:
-                            phi_for_eval = copy.deepcopy(accelerator.unwrap_model(phi))
-                            ema_phi.copy_to(phi_for_eval.parameters())
-                        else:
-                            phi_for_eval = phi
-
-                        phi_for_eval.eval()
-
-                        # Extract the pseudo tokens for the VRD test set using Phi
-                        accuracy = extract_pseudo_tokens_with_phi(text_encoder,text_encoder , tokenizer, phi_for_eval,VRDDataset_test , relation_to_tokens_test
+    ################################TODO
+    if args.mode == "eval":
+        phi.to(accelerator.device)
+        phi.eval()
+        accuracy = calculate_validation(text_encoder,text_encoder , tokenizer, phi,VRDDataset_test , relation_to_tokens_test
                                                        ,save_path='/root/reyhane/CIR/results/accuracy_scores.json' ,args= args, accelerator=accelerator)
-                        print(accuracy)
-                        phi.train()
+        print(accuracy)
+    #################################
+    if args.mode == "train":
+        phi.train()
 
-            if global_step >= args.max_train_steps:
-                exit()
+        train_loss = 0.0
+        global_step = 0
+        '''
+        is_local_main_process ? 
+        Only show the tqdm progress bar if this process is the main one locally.
+        To avoid having multiple progress bars from multiple GPUs flooding the screen.
+        '''
+        progress_bar = tqdm(range(global_step, args.max_train_steps), disable=not accelerator.is_local_main_process)
+        progress_bar.set_description("Steps")
+
+        while True:
+            '''
+            original_tokens : consist of tokens from origin prompts
+            replaced_tokens : consist of tokens contain [$] 
+            '''
+            for idx, (original_tokens, replaced_tokens, indicators) in enumerate(train_dataset):
+                original_tokens = original_tokens.to(accelerator.device)
+                replaced_tokens = replaced_tokens.to(accelerator.device)
+                #encode the original_tokens  from prompts
+                # encode grand truth by encoder 
+                org = text_encoder(input_ids=original_tokens)
+                original_text_embeddings, original_last_hidden_states = org.text_embeds, org.last_hidden_state
+                input_features = original_text_embeddings.clone()
+                # add noise 
+                '''
+                ε_i = α_i * N(0, 1)
+                α_i ∈ [0,1] is random per sample (controls noise strength),
+                N(0,1) is standard Gaussian noise over D dimensions.
+                '''
+                input_features += 1.0 * torch.rand(input_features.shape[0], device=input_features.device).unsqueeze(-1) * torch.randn(input_features.shape, device=input_features.device)
+
+                # normalize test
+                if args.l2_normalize:
+                    input_features = F.normalize(input_features, dim=-1)
+                #################
+                #Predict pseudo-token embeddings
+                estimated_token_embeddings = phi(input_features)
+                '''
+                1) first of all it embedds the replaced_tokens using text encoder
+                Returns [batch_size, seq_len, hidden_dim] → the normal word embeddings
+                2) For any token in text(replaced_tokens) that has ID 259, replace its embedding with pseudo_tokens[i].
+                3) add positional embedding because the transformers do not know the positions
+                    This adds a unique vector for each position in the sentence:
+
+                    0th token → add vector P₀
+
+                    1st token → add vector P₁
+
+                    2nd token → add vector P₂
+                4) Feeds the modified embeddings into CLIP’s transformer
+                5) Normalize final layer
+                x_last: This is the last hidden state before projection.
+                6) pooling : For each token (word), the model has a vector.
+                    But we need just ONE vector per sentence to represent the whole thing.
+                    pool the sequence of token embeddings into one vector per sentence.
+                7)  projects into CLIP’s shared embedding space
+                8)  outputes:
+                    x: the final embedding used for comparison/loss
+                    x_last: all hidden states (useful for loss inspection or token-wise analysis)
+                '''
+                replaced_text_embeddings, replaced_last_hidden_states = encode_with_pseudo_tokens_HF(text_encoder, replaced_tokens, estimated_token_embeddings, return_last_states=True)
+
+                loss = F.mse_loss(replaced_text_embeddings.float(), original_text_embeddings.float(), reduction="mean")
+
+                avg_loss = accelerator.gather(loss.repeat(args.batch_size)).mean()
+                train_loss += avg_loss.item() / args.gradient_accumulation_steps
+
+                # Backpropagation and optimization
+                accelerator.backward(loss)
+                if accelerator.sync_gradients and args.max_grad_norm is not None:
+                    accelerator.clip_grad_norm_(phi.parameters(), args.max_grad_norm)
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad()
+                
+                if accelerator.sync_gradients:
+                    if args.use_ema:
+                        ema_phi.step(phi.module.parameters())
+                    progress_bar.update(1)
+                    global_step += 1
+                    '''
+                    Logs training loss
+
+                    Logs learning rate
+
+                    Logs ratio of examples with real token replaced
+                    '''
+                    accelerator.log({"train/train_loss": train_loss}, step=global_step)
+                    train_loss = 0.0
+                    accelerator.log({'train/lr': lr_scheduler.get_last_lr()[0]}, step=global_step)
+                    accelerator.log({'train/preproc_rate': torch.sum(indicators).item() / len(indicators)}, step=global_step)
+                    '''
+                    If step is a multiple of args.checkpointing_steps, it saves:
+
+                    phi_latest
+
+                    phi_<step>
+
+                    EMA (Exponential Moving Average) versions if enabled
+                    '''
+                    if args.checkpointing_steps and global_step % args.checkpointing_steps == 0:
+                        if accelerator.is_main_process:
+                            logger.info(f"model saving... step: {global_step}")
+                            save_phi(f"phi_{global_step:09}", global_step, accelerator.unwrap_model(phi), args.output_dir)
+                            save_phi(f"phi_latest", global_step, accelerator.unwrap_model(phi), args.output_dir)
+                        if args.use_ema:
+                            phi_for_saving = copy.deepcopy(accelerator.unwrap_model(phi))
+                            ema_phi.copy_to(phi_for_saving.parameters())
+                            save_phi(f"ema_phi_{global_step:09}", global_step, phi_for_saving, args.output_dir)
+                            save_phi(f"ema_phi_latest", global_step, phi_for_saving, args.output_dir)
+                
+                    #######################################3
+                    if args.validation_steps and (global_step % args.validation_steps == 0 or global_step == 50 ):
+                        if accelerator.is_main_process:
+                            logger.info(f"evaluate model... step: {global_step}")
+
+                            if args.use_ema:
+                                phi_for_eval = copy.deepcopy(accelerator.unwrap_model(phi))
+                                ema_phi.copy_to(phi_for_eval.parameters())
+                            else:
+                                phi_for_eval = phi
+
+                            phi_for_eval.eval()
+
+                            # Extract the pseudo tokens for the VRD test set using Phi
+                            accuracy = extract_pseudo_tokens_with_phi(text_encoder,text_encoder , tokenizer, phi_for_eval,VRDDataset_test , relation_to_tokens_test
+                                                        ,save_path='/root/reyhane/CIR/results/accuracy_scores.json' ,args= args, accelerator=accelerator)
+                            print(accuracy)
+                            phi.train()
+
+                if global_step >= args.max_train_steps:
+                    exit()
+
 
 
 if __name__ == '__main__':
     args = parse_args()
 
     train_phi(args)
+

@@ -499,7 +499,8 @@ class VRDDataset(Dataset):
 
         for j in selected_indices:
             s, r, o = relations[j]
-            masked_relation = ' '.join(['[$]'] * len(r.split()))
+            #masked_relation = ' '.join(['[$]'] * len(r.split()))
+            masked_relation = ' '.join(['[$]'] * 1)
             masked_triplets[j] = f"{s} {masked_relation} {o}"
             #s, r, o = final_triplets[j].split(' ', 2)
             #masked_triplets[j] = f"{s} [$] {o}"
