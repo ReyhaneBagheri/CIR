@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 from loader import build_loader , create_relation_to_tokens_test
-from encode_with_pseudo_tokens import encode_with_pseudo_tokens_HF , extract_pseudo_tokens_with_phi, extract_pseudo_tokens_with_phi2 , calculate_validation
+from encode_with_pseudo_tokens import encode_with_pseudo_tokens_HF , extract_pseudo_tokens_with_phi , calculate_validation
 from models import build_text_encoder, Phi, EMAModel
 
 

@@ -1,0 +1,35 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "name": "Train with torch.distributed.run",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "torch.distributed.run",
+            "console": "integratedTerminal",
+            "args": [
+                "--nproc_per_node=1",
+                "--nnodes=1",
+                "--node_rank=0",
+                "--master_addr=localhost",
+                "--master_port=5100",
+                "train_phi.py",
+                "--batch_size", "512",
+                "--output_dir", "/data/reyDataset/outputs/phi_experiment",
+                "--cirr_dataset_path", "/path/to/cir_datasets/CIRR",
+                "--mixed_precision", "fp16",
+                "--clip_model_name", "large",
+                "--validation_steps", "1000",
+                "--checkpointing_steps", "1000",
+                "--seed", "12345",
+                "--lr_scheduler", "constant_with_warmup",
+                "--lr_warmup_steps", "0",
+                "--max_train_steps", "20000",
+                "--resume","/data/reyDataset/outputs/phi_experiment/checkpoints/phi_000020000.pt",
+                "--mode", "eval"
+                
+            ]
+        }
+    ]
+}
