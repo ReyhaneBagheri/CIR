@@ -3,6 +3,7 @@ LinCIR
 Copyright (c) 2023-present NAVER Corp.
 CC BY-NC-4.0 (https://creativecommons.org/licenses/by-nc/4.0/)
 '''
+import clip
 import torch
 from clip.model import CLIP
 from transformers import CLIPTextModelWithProjection
@@ -343,11 +344,11 @@ def calculate_validation2(clip_model: CLIPTextModelWithProjection, text_encoder,
             #estimated_token_embeddings = torch.vstack(estimated_token_embeddings)
             estimated_token_embeddings = estimated_token_embeddings.to(accelerator.device)#[1, 768]
             input_captions = [
-            f"a photo of $ that {triplet_string}"]
-            tokenized_input_captions = tokenizer(input_captions, context_length=77).to(accelerator.device)
+            f"$ demonstrating {triplet_string}"]
+            tokenized_input_captions = clip.tokenize(input_captions, context_length=77).to(accelerator.device)
             text_features = encode_with_pseudo_tokens_HF(clip_model, tokenized_input_captions, estimated_token_embeddings)
             cls2 = F.normalize(text_features)
-            estimated_token_embeddings = cls2
+            estimated_token_embeddings = cls2 #torch.Size([1, 768])
             
             '''
             estimated_token_embeddings = estimated_token_embeddings.type(clip_model.dtype)

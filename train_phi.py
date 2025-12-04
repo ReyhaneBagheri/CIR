@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 from loader import build_loader , create_relation_to_tokens_test
-from encode_with_pseudo_tokens import encode_with_pseudo_tokens_HF , extract_pseudo_tokens_with_phi , calculate_validation
+from encode_with_pseudo_tokens import encode_with_pseudo_tokens_HF , extract_pseudo_tokens_with_phi , calculate_validation2
 from models import build_text_encoder, Phi, EMAModel
 
 
@@ -247,7 +247,7 @@ def train_phi(args):
     if args.mode == "eval":
         phi.to(accelerator.device)
         phi.eval()
-        accuracy = calculate_validation(text_encoder,text_encoder , tokenizer, phi,VRDDataset_test , relation_to_tokens_test
+        accuracy = calculate_validation2(text_encoder,text_encoder , tokenizer, phi,VRDDataset_test , relation_to_tokens_test
                                                        ,save_path='/root/reyhane/CIR/results/accuracy_scores.json' ,args= args, accelerator=accelerator)
         print(accuracy)
     #################################
@@ -379,8 +379,10 @@ def train_phi(args):
                             phi_for_eval.eval()
 
                             # Extract the pseudo tokens for the VRD test set using Phi
-                            accuracy = extract_pseudo_tokens_with_phi(text_encoder,text_encoder , tokenizer, phi_for_eval,VRDDataset_test , relation_to_tokens_test
+                            accuracy = calculate_validation2(text_encoder,text_encoder , tokenizer, phi_for_eval,VRDDataset_test , relation_to_tokens_test
                                                         ,save_path='/root/reyhane/CIR/results/accuracy_scores.json' ,args= args, accelerator=accelerator)
+                            # accuracy = calculate_validation2(text_encoder,text_encoder , tokenizer, phi,VRDDataset_test , relation_to_tokens_test
+                            #                            ,save_path='/root/reyhane/CIR/results/accuracy_scores.json' ,args= args, accelerator=accelerator)
                             print(accuracy)
                             phi.train()
 
