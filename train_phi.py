@@ -45,7 +45,7 @@ def parse_args():
     parser.add_argument("--output_dir", default="trained_models", type=str,
                         help="The output directory where the model predictions and checkpoints will be written")
     parser.add_argument("--logging_dir", default="logs", type=str, help="tensorboard logs will saved here")
-    parser.add_argument("--cache_dir", default="./hf_models", type=str,
+    parser.add_argument("--cache_dir", default="/data/reyDataset/hf_models", type=str,
                         help="Path to model cache folder")
     parser.add_argument("--report_to", default="tensorboard", type=str, help="")
     parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
