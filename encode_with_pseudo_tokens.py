@@ -341,12 +341,15 @@ def calculate_validation2(clip_model: CLIPTextModelWithProjection, text_encoder,
             #estimated_token_embeddings = phi_for_eval(input_features).squeeze(0)  # shape [dim]
             estimated_token_embeddings = phi_for_eval(input_features) #estimated_token_embeddings , input_features=torch.Size([1, 768])
             #estimated_token_embeddings = torch.vstack(estimated_token_embeddings)
-            
-            
-            
-            
-            
             estimated_token_embeddings = estimated_token_embeddings.to(accelerator.device)#[1, 768]
+            input_captions = [
+            f"a photo of $ that {triplet_string}"]
+            tokenized_input_captions = tokenizer(input_captions, context_length=77).to(accelerator.device)
+            text_features = encode_with_pseudo_tokens_HF(clip_model, tokenized_input_captions, estimated_token_embeddings)
+            cls2 = F.normalize(text_features)
+            estimated_token_embeddings = cls2
+            
+            '''
             estimated_token_embeddings = estimated_token_embeddings.type(clip_model.dtype)
             estimated_token_embeddings = estimated_token_embeddings + clip_model.text_model.embeddings.position_embedding(clip_model.text_model.embeddings.position_ids) #torch.Size([1, 77, 768])
             _causal_attention_mask2 = _make_causal_mask(torch.Size([1, 77]), estimated_token_embeddings.dtype, device=estimated_token_embeddings.device)
@@ -365,6 +368,7 @@ def calculate_validation2(clip_model: CLIPTextModelWithProjection, text_encoder,
                 x2 = clip_model.text_projection(x2)
             cls2 = x2 #torch.Size([1, 768])
             estimated_token_embeddings = cls2
+            '''
             #TODO create new function to calculate cls + add x_last 
             # Compute cosine similarity with all relation embeddings
            
