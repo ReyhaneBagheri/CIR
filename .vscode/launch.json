@@ -2,6 +2,7 @@
     "version": "0.2.0",
     "configurations": [
 
+
         {
             "name": "Train with torch.distributed.run",
             "type": "debugpy",
@@ -26,9 +27,8 @@
                 "--lr_scheduler", "constant_with_warmup",
                 "--lr_warmup_steps", "0",
                 "--max_train_steps", "20000",
-                "--resume","/data/reyDataset/outputs/phi_experiment/checkpoints/phi_000020000.pt",
-                "--mode", "eval"
-                
+                "--mode", "eval",
+                "--resume", "/data/reyDataset/outputs/phi_experiment/checkpoints/phi_latest.pt"
             ]
         }
     ]
