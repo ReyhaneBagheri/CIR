@@ -284,38 +284,42 @@ def calculate_validation(clip_model: CLIPTextModelWithProjection, text_encoder, 
 
     return accuracy
 
-
-
-def calculate_validation2(clip_model: CLIPTextModelWithProjection, text_encoder, tokenizer, phi_for_eval,VRDDataset_test , relation_to_tokens_test, save_path, args,accelerator):
-    
-    scores = []
-    scores2 = []
-    relation_embeddings = {}
-    
-    for r , tokens  in relation_to_tokens_test.items():
-
-        #input_ids = tokens.to(clip_model.text_model.embeddings.token_embedding.weight.device)
-        input_ids = tokens.unsqueeze(0).to(
-                    clip_model.text_model.embeddings.token_embedding.weight.device
-                )#torch.Size([1, 77])
-        emb = clip_model.text_model.embeddings.token_embedding(input_ids).type(clip_model.dtype)#create vector 77*768
-        emb = emb + clip_model.text_model.embeddings.position_embedding(clip_model.text_model.embeddings.position_ids) #torch.Size([1, 77, 768])
-        #TODO add batch size
-        _causal_attention_mask = _make_causal_mask(input_ids.shape, emb.dtype, device=emb.device)
-        x = clip_model.text_model.encoder(inputs_embeds=emb,
+def encode_textEncoder(tokenizer ,input_captions_r , accelerator,clip_model: CLIPTextModelWithProjection)-> torch.Tensor:
+    input_ids = tokenizer(
+                input_captions_r,
+                return_tensors="pt",
+                padding="max_length",
+                truncation=True,
+                max_length=77
+            )["input_ids"].to(accelerator.device)
+    emb = clip_model.text_model.embeddings.token_embedding(input_ids).type(clip_model.dtype)#create vector 77*768
+    emb = emb + clip_model.text_model.embeddings.position_embedding(clip_model.text_model.embeddings.position_ids) #torch.Size([1, 77, 768])
+    #TODO add batch size
+    _causal_attention_mask = _make_causal_mask(input_ids.shape, emb.dtype, device=emb.device)
+    x = clip_model.text_model.encoder(inputs_embeds=emb,
                                       attention_mask=None,
                                       causal_attention_mask=_causal_attention_mask,
                                       output_attentions=False,
                                       output_hidden_states=False,
                                       return_dict=False) #(batch_size, seq_len, embed_dim) →(1, 77, 768)
-        x = x[0] # torch.Size([1, 77, 768])
-        x_last = clip_model.text_model.final_layer_norm(x) #torch.Size([1, 77, 768])
-        x = x_last[torch.arange(x_last.shape[0], device=x_last.device),
+    x = x[0] # torch.Size([1, 77, 768])
+    x_last = clip_model.text_model.final_layer_norm(x) #torch.Size([1, 77, 768])
+    x = x_last[torch.arange(x_last.shape[0], device=x_last.device),
             input_ids.to(dtype=torch.int, device=x_last.device).argmax(dim=-1),
             ] #torch.Size([1, 768])
-        if hasattr(clip_model, 'text_projection'):
-            x = clip_model.text_projection(x)
-        cls = x #torch.Size([1, 768])
+    if hasattr(clip_model, 'text_projection'):
+        x = clip_model.text_projection(x)
+    cls = x #torch.Size([1, 768])
+    return cls
+def calculate_validation2(clip_model: CLIPTextModelWithProjection, text_encoder, tokenizer, phi_for_eval,VRDDataset_test , relation_to_tokens_test, save_path, args,accelerator):
+    
+    scores = []
+    scores2 = []
+    relation_embeddings = {}
+    best_r = {}
+    for r , tokens  in relation_to_tokens_test.items():
+        input_captions_r = f"a photo demonstrating {r}"
+        cls =encode_textEncoder(tokenizer ,input_captions_r , accelerator,clip_model)#torch.Size([1, 768])
         relation_embeddings[r] = cls #(batch_size, embed_dim) → (1, 768)
     results = []
     # Loop over test dataset
@@ -324,52 +328,21 @@ def calculate_validation2(clip_model: CLIPTextModelWithProjection, text_encoder,
         
         for s, r, o in relations:
             triplet_string = f"{s} {r} {o}"
-            tokenized_triplet = tokenizer(
-                triplet_string,
-                return_tensors="pt",
-                padding="max_length",
-                truncation=True,
-                max_length=77
-            )["input_ids"].to(accelerator.device)#torch.Size([1, 77])
-
-            # Encode triplet after the transformer and projection
-            org = text_encoder(input_ids=tokenized_triplet) #torch.Size([1, 77])
-            input_features = org.text_embeds.clone()
-            if args.l2_normalize:
-                input_features = F.normalize(input_features, dim=-1)#[1, 768]
-
+            cls22 = encode_textEncoder(tokenizer ,triplet_string , accelerator,clip_model) #torch.Size([1, 768])
+            
+            
             # Phi prediction
             #estimated_token_embeddings = phi_for_eval(input_features).squeeze(0)  # shape [dim]
-            estimated_token_embeddings = phi_for_eval(input_features) #estimated_token_embeddings , input_features=torch.Size([1, 768])
+            estimated_token_embeddings = phi_for_eval(cls22) #estimated_token_embeddings , input_features=torch.Size([1, 768])
             #estimated_token_embeddings = torch.vstack(estimated_token_embeddings)
             estimated_token_embeddings = estimated_token_embeddings.to(accelerator.device)#[1, 768]
             input_captions = [
-            f"$ demonstrating {triplet_string}"]
+            f"a photo demonstrating $"]
             tokenized_input_captions = clip.tokenize(input_captions, context_length=77).to(accelerator.device)
             text_features = encode_with_pseudo_tokens_HF(clip_model, tokenized_input_captions, estimated_token_embeddings)
             cls2 = F.normalize(text_features)
             estimated_token_embeddings = cls2 #torch.Size([1, 768])
             
-            '''
-            estimated_token_embeddings = estimated_token_embeddings.type(clip_model.dtype)
-            estimated_token_embeddings = estimated_token_embeddings + clip_model.text_model.embeddings.position_embedding(clip_model.text_model.embeddings.position_ids) #torch.Size([1, 77, 768])
-            _causal_attention_mask2 = _make_causal_mask(torch.Size([1, 77]), estimated_token_embeddings.dtype, device=estimated_token_embeddings.device)
-            x2 = clip_model.text_model.encoder(inputs_embeds=estimated_token_embeddings,
-                                        attention_mask=None,
-                                        causal_attention_mask=_causal_attention_mask2,
-                                        output_attentions=False,
-                                        output_hidden_states=False,
-                                        return_dict=False) #(batch_size, seq_len, embed_dim) →(1, 77, 768)
-            x2 = x2[0] #torch.Size([1, 77, 768])
-            x_last2 = clip_model.text_model.final_layer_norm(x2)#torch.Size([1, 77, 768])
-            x2 = x_last2[torch.arange(x_last2.shape[0], device=x_last2.device),
-                estimated_token_embeddings.to(dtype=torch.int, device=x_last2.device).argmax(dim=-1).argmax(dim=-1),
-                ]
-            if hasattr(clip_model, 'text_projection'):
-                x2 = clip_model.text_projection(x2)
-            cls2 = x2 #torch.Size([1, 768])
-            estimated_token_embeddings = cls2
-            '''
             #TODO create new function to calculate cls + add x_last 
             # Compute cosine similarity with all relation embeddings
            
@@ -384,9 +357,11 @@ def calculate_validation2(clip_model: CLIPTextModelWithProjection, text_encoder,
 
             # estimated_token_embeddings.shape
             # torch.Size([1, 768])
-            estimated = estimated = estimated_token_embeddings.unsqueeze(0).expand(rel_embs.size(0), 1, -1)
+            estimated = estimated_token_embeddings.unsqueeze(0).expand(rel_embs.size(0), 1, -1)
             # Compute cosine similarities / after f.cosine -> [305, 1] — one cosine value per (batch, pair)/ after squeeze-> [305]
-            cos_sims = F.cosine_similarity(estimated, rel_embs, dim=2).squeeze(1) 
+            estimated = F.normalize(estimated)
+            rel_embs = F.normalize(rel_embs)
+            cos_sims = F.cosine_similarity(estimated, rel_embs, dim=2).squeeze(1) #torch.Size([305, 1, 768])
 
             # Get the best one
             best_idx = torch.argmax(cos_sims).item()
@@ -399,6 +374,7 @@ def calculate_validation2(clip_model: CLIPTextModelWithProjection, text_encoder,
             ###########################
             # Compare best match with ground truth r
             scores.append(1 if best_rel == r else 0)
+            best_r[r] = best_rel
 
     # Compute accuracy
     accuracy = sum(scores) / len(scores) if len(scores) > 0 else 0.0
